@@ -21,7 +21,7 @@ The demo has three modes:
 
 ## Live demo
 
-> **Live URL:** _TODO — paste the Vercel URL here after the first deploy._
+> **Live URL:** https://real-estate-ai-receptionist-demo.vercel.app
 
 ## Tech stack
 
@@ -47,15 +47,15 @@ see below.
 | `RETELL_API_KEY`   | Mode 1 (live call)     | From the Retell dashboard.                                         |
 | `RETELL_AGENT_ID`  | Mode 1 (live call)     | The `agent_id` of the Sarah agent you create.                      |
 | `OPENAI_API_KEY`   | Summary + sample audio | Mode 1 call-summary extraction; build-time Mode 2 voice generation. |
-| `GOOGLE_SHEETS_SERVICE_ACCOUNT_EMAIL` | Booking buttons | Service-account email (shared by Sheets + Calendar). |
-| `GOOGLE_SHEETS_PRIVATE_KEY` | Booking buttons | Service-account private key (quoted, keep the `\n`). |
-| `GOOGLE_SHEETS_SPREADSHEET_ID` | Booking buttons | Target Google Sheet. |
-| `GOOGLE_CALENDAR_ID` | Booking buttons | Target Google Calendar. |
+| `GOOGLE_SHEETS_SERVICE_ACCOUNT_EMAIL` | Sheet + Calendar booking | Service-account email (shared by Sheets + Calendar). |
+| `GOOGLE_SHEETS_PRIVATE_KEY` | Sheet + Calendar booking | Service-account private key (quoted, keep the `\n`). |
+| `GOOGLE_SHEETS_SPREADSHEET_ID` | Sheet + Calendar booking | Target Google Sheet. |
+| `GOOGLE_CALENDAR_ID` | Sheet + Calendar booking | Target Google Calendar. |
 
 If `RETELL_API_KEY` / `RETELL_AGENT_ID` are missing, Mode 1 is disabled and a
-setup banner is shown — Modes 2 and 3 stay fully functional. The Call Summary
-booking buttons (see below) show "not connected" until the `GOOGLE_*` vars are
-set — every key is optional.
+setup banner is shown — Modes 2 and 3 stay fully functional. The booking
+(see "Booking & calendar" below) reports "not connected" until the `GOOGLE_*`
+vars are set — every key is optional and degrades gracefully.
 
 ## Retell agent setup (required for Mode 1)
 
@@ -71,6 +71,8 @@ The AI agent itself lives in Retell, not in this repo. Create it once:
    `agent_name` = **Jessica Martinez**, `market` = **South Tampa, Florida**.
 6. Copy the agent's `agent_id` into `.env.local` (and Vercel) as
    `RETELL_AGENT_ID`; create an API key and set it as `RETELL_API_KEY`.
+7. **For live calendar checks**, add the `check_availability` custom function
+   to the agent — see the **Booking & calendar** section below.
 
 ### System prompt
 
@@ -159,26 +161,26 @@ Cool (book follow-up or nurture): timeline 6-12+ months; just exploring / no urg
 
 Ask one piece at a time: name, best callback number, email.
 
-### Step 6: Offer Consultation Time
+### Step 6: Offer Consultation Time and Check the Calendar
 
 Based on lead quality, offer TWO specific time options.
 Hot: "{{agent_name}} would love to talk with you about this. We can do today at [time1], or tomorrow morning at [time2] — which works better?"
 Warm: "Let's get you on {{agent_name}}'s calendar for a quick call. We have [time1] or [time2] open this week — which works for you?"
 Cool: "{{agent_name}} can give you a call to walk through your options. We have [time1] or [time2] available — what works best?"
-If neither time works, offer alternatives.
 
-### Step 7: Book the Consultation
+Once the caller picks a time, ALWAYS call the check_availability function with that time (the requested_time argument). If it comes back available, confirm the time. If it comes back not available, do NOT book it — offer the caller the alternative times from the function's response, have them pick one, and check again if needed.
 
-Once the caller confirms a time, call book_appointment with all collected details: customer_name, customer_phone, customer_email, inquiry_type (buyer/seller/both), property_address (if applicable), timeline, motivation (sellers) / property_type (buyers), working_with_agent (buyers), pre_approval_status (buyers), lead_quality (hot/warm/cool), appointment_window, notes.
+### Step 7: Confirm the Consultation
 
-### Step 8: Confirm and Close
+Once an available time is agreed, confirm it verbally: "Perfect — you're all set with {{agent_name}} for [time]. You'll get a confirmation shortly." The lead and the consultation are recorded automatically right after the call; you do not need to call any other function to book.
 
-After booking succeeds: "Perfect, you're booked with {{agent_name}} for [appointment_window]. You'll get a text confirmation in a minute. Anything else I can help you with?"
-If nothing else: "Great talking to you — {{agent_name}} will be in touch then. Thanks!" Call end_call.
+### Step 8: Close
 
-### Step 9: Booking Fallback
+When there is nothing else: "Great talking to you — {{agent_name}} will be in touch then. Thanks!" Call end_call.
 
-If book_appointment fails: "I'm having a quick issue locking that in on the calendar. Let me make sure {{agent_name}} reaches out to you within the next hour to confirm — is that okay?" Confirm their info, then close and call end_call.
+### Step 9: Disqualified or No Booking
+
+If the caller is just exploring, is already working with another agent, or is otherwise not ready to book, do not push a consultation. Wrap up warmly and call end_call — the lead is still logged automatically for {{agent_name}} to follow up on.
 
 ## Escalation and Transfer Rules
 
@@ -257,37 +259,55 @@ To avoid regenerating on every deploy, render the clips once locally
 (`OPENAI_API_KEY=sk-... node scripts/generate-sample-audio.mjs`) and commit
 `public/audio/lines/` — the script skips when the clips already exist.
 
-## Booking destinations
+## Booking & calendar
 
-After a call (Mode 1 or Mode 2), the Call Summary shows **"Send this booking
-to"** buttons that write the qualified lead to real destinations:
+Booking is **programmatic** — it happens automatically based on how the call
+goes, with no buttons to click:
 
-- **Add to Google Sheet** — appends a row to a spreadsheet
-- **Book in Google Calendar** — creates a calendar event for the consultation
+- **Every call** → the lead is logged as a row in a Google **Sheet** (your CRM),
+  with an outcome of "Booked" or "Not booked".
+- **Qualified call with a time agreed** → a Google **Calendar** event is also
+  created for the consultation.
+- **Disqualified call** → Sheet only, no calendar event.
 
-Both run through one Google **service account**. Until it's configured, the
-buttons show "not connected" rather than breaking — the demo never depends on
-them.
+While the call is live, the agent calls a **`check_availability`** function to
+read the calendar — if the caller's requested time is taken, Sarah offers the
+open slots it returns instead. After the call, the app records the outcome via
+`/api/agent/book-appointment` (Sheet always; Calendar when there's an
+appointment). Everything degrades gracefully — with no `GOOGLE_*` vars set, the
+Call Summary simply reports "not connected".
 
-### Setup (one-time, ~15 min)
+### Google setup (one-time, ~15 min)
 
 1. In [Google Cloud Console](https://console.cloud.google.com), create a
    project and **enable the Google Sheets API and Google Calendar API**.
 2. Create a **service account**, add a **JSON key**, and download it.
-3. Create a Google Sheet with a tab named **`Bookings`** and this header row:
+3. Create a Google Sheet with a tab named **`Bookings`** and this header row
+   (12 columns, A–L):
    `Timestamp · Customer Name · Phone · Email · Inquiry Type · Property ·
-   Timeline · Financing · Lead Quality · Appointment · Source`
+   Timeline · Financing · Lead Quality · Appointment · Outcome · Source`
 4. Create (or pick) a Google Calendar for demo consultations.
 5. **Share both the Sheet and the Calendar** with the service account's email
    (`client_email` from the JSON) — Editor on the Sheet, "Make changes to
    events" on the Calendar.
-6. Set the env vars (in `.env.local` and Vercel): `GOOGLE_SHEETS_SERVICE_ACCOUNT_EMAIL`
-   (the JSON `client_email`), `GOOGLE_SHEETS_PRIVATE_KEY` (the JSON `private_key`,
-   quoted, with its `\n` intact), `GOOGLE_SHEETS_SPREADSHEET_ID` (from the Sheet
-   URL), and `GOOGLE_CALENDAR_ID` (from the Calendar's settings).
+6. Set `GOOGLE_SHEETS_SERVICE_ACCOUNT_EMAIL` (the JSON `client_email`),
+   `GOOGLE_SHEETS_PRIVATE_KEY` (the JSON `private_key`, quoted, `\n` intact),
+   `GOOGLE_SHEETS_SPREADSHEET_ID` (from the Sheet URL), and `GOOGLE_CALENDAR_ID`
+   (from the Calendar's settings) — in `.env.local` and Vercel.
 
-One service account powers both Sheets and Calendar — that's why both share the
-`GOOGLE_SHEETS_`-prefixed credential vars.
+### Retell function setup (for the live availability check)
+
+For Sarah to check the calendar during a Mode 1 call, add **one custom function**
+to the Retell agent:
+
+- **Name:** `check_availability`
+- **Description:** "Check whether a requested consultation time is open on the
+  calendar. Call this whenever the caller picks a time, before confirming it."
+- **Parameter:** `requested_time` — a string, e.g. "today at 4 PM".
+- **URL:** `https://real-estate-ai-receptionist-demo.vercel.app/api/agent/check-availability`
+
+The booking itself (`/api/agent/book-appointment`) is called by the app right
+after the call — it does **not** need to be a Retell function.
 
 ## Deployment (Vercel)
 
@@ -305,21 +325,21 @@ One service account powers both Sheets and Calendar — that's why both share th
 
 ```
 app/
-  api/retell-token/route.ts   Creates a Retell web call (server-side key)
-  api/summarize/route.ts      GPT-4o transcript → structured lead summary
-  api/booking/*/route.ts      Writes the booking to Google Sheets / Calendar
-  page.tsx                    Server component; checks env, renders the demo
+  api/retell-token/route.ts          Creates a Retell web call (server-side key)
+  api/summarize/route.ts             GPT-4o transcript → structured lead summary
+  api/agent/check-availability/      Retell function — reads calendar availability
+  api/agent/book-appointment/        Logs the lead to Sheets, books the Calendar
+  page.tsx                           Server component; checks env, renders the demo
 components/
-  demo-app.tsx                Hero + mode switcher + navigation
-  mode-live-call.tsx          Mode 1 — Retell Web SDK integration
-  mode-sample-call.tsx        Mode 2 — voiced per-line playback
-  mode-dashboard.tsx          Mode 3 — animated lead dashboard
-  call-summary.tsx            Post-call summary + booking buttons
-  booking-destinations.tsx    Sheets / Calendar booking actions
+  demo-app.tsx                       Hero + mode switcher + navigation
+  mode-live-call.tsx                 Mode 1 — Retell Web SDK integration
+  mode-sample-call.tsx               Mode 2 — voiced per-line playback
+  mode-dashboard.tsx                 Mode 3 — animated lead dashboard
+  call-summary.tsx                   Post-call summary + programmatic booking
 lib/
-  booking.ts                  Google auth + appointment-window parsing
-  sample-call-script.json     Mode 2 transcript (single source of truth)
-  dashboard-data.ts           Mode 3 mock data
+  booking.ts                         Google auth, time parsing, availability
+  sample-call-script.json            Mode 2 transcript (single source of truth)
+  dashboard-data.ts                  Mode 3 mock data
 ```
 
 ---

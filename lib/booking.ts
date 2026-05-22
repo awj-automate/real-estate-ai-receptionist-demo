@@ -1,12 +1,12 @@
 import { google } from "googleapis";
 
 /** America/New_York — the demo market's timezone (Tampa, FL). */
-const TZ = "America/New_York";
+export const TZ = "America/New_York";
 
 /**
  * Builds a Google service-account JWT for the given scopes, or returns null
  * when the service-account env vars aren't set. One service account is shared
- * by both the Sheets and Calendar integrations.
+ * by the Sheets and Calendar integrations.
  */
 export function getGoogleAuth(scopes: string[]) {
   const email = process.env.GOOGLE_SHEETS_SERVICE_ACCOUNT_EMAIL;
@@ -15,6 +15,27 @@ export function getGoogleAuth(scopes: string[]) {
   // .env stores the key with literal "\n" — restore real newlines.
   const key = rawKey.replace(/\\n/g, "\n");
   return new google.auth.JWT({ email, key, scopes });
+}
+
+/**
+ * Reads tool arguments from a Retell custom-function webhook (`{ name, args,
+ * call }`) or a direct POST body (the app calls these routes too).
+ */
+export async function readToolArgs(
+  req: Request
+): Promise<Record<string, unknown>> {
+  try {
+    const body = (await req.json()) as Record<string, unknown> | null;
+    if (body && typeof body === "object") {
+      if (body.args && typeof body.args === "object") {
+        return body.args as Record<string, unknown>;
+      }
+      return body;
+    }
+  } catch {
+    /* missing or invalid body */
+  }
+  return {};
 }
 
 export interface BookingTimes {
@@ -40,6 +61,29 @@ function dateInTz(offsetDays: number): string {
   return `${base.getUTCFullYear()}-${pad(base.getUTCMonth() + 1)}-${pad(
     base.getUTCDate()
   )}`;
+}
+
+/** Current hour (0–23) in the booking timezone. */
+function nowHourInTz(): number {
+  return Number(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: TZ,
+      hour: "numeric",
+      hour12: false,
+    }).format(new Date())
+  );
+}
+
+/**
+ * Converts a naive wall-clock datetime ("2026-05-22T16:00:00") in `tz` to the
+ * real UTC instant — without a timezone library. Handles DST because
+ * toLocaleString reports the actual offset for that date.
+ */
+export function zonedToUtc(naive: string, tz: string): Date {
+  const asUtc = new Date(`${naive}Z`);
+  const tzWall = new Date(asUtc.toLocaleString("en-US", { timeZone: tz }));
+  const utcWall = new Date(asUtc.toLocaleString("en-US", { timeZone: "UTC" }));
+  return new Date(asUtc.getTime() + (utcWall.getTime() - tzWall.getTime()));
 }
 
 /**
@@ -107,4 +151,37 @@ export function parseAppointmentWindow(text: string): BookingTimes {
     end: `${date}T${pad(eh)}:${pad(em)}:00`,
     timeZone: TZ,
   };
+}
+
+export interface CandidateSlot {
+  /** Friendly label, e.g. "tomorrow at 10 AM". */
+  label: string;
+  start: Date;
+  end: Date;
+}
+
+/**
+ * Business-hour 1-hour slots across today (remaining) and tomorrow — used to
+ * suggest alternatives when a requested time is unavailable.
+ */
+export function candidateSlots(): CandidateSlot[] {
+  const hours = [9, 11, 13, 15];
+  const nowHour = nowHourInTz();
+  const slots: CandidateSlot[] = [];
+
+  for (const offset of [0, 1]) {
+    const date = dateInTz(offset);
+    const dayWord = offset === 0 ? "today" : "tomorrow";
+    for (const h of hours) {
+      if (offset === 0 && h <= nowHour + 1) continue; // skip past/too-soon today
+      const h12 = h % 12 === 0 ? 12 : h % 12;
+      const ampm = h < 12 ? "AM" : "PM";
+      slots.push({
+        label: `${dayWord} at ${h12} ${ampm}`,
+        start: zonedToUtc(`${date}T${pad(h)}:00:00`, TZ),
+        end: zonedToUtc(`${date}T${pad(h + 1)}:00:00`, TZ),
+      });
+    }
+  }
+  return slots;
 }
