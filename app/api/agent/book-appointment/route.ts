@@ -4,6 +4,9 @@ import { getGoogleAuth, parseAppointmentWindow, readToolArgs } from "@/lib/booki
 
 export const dynamic = "force-dynamic";
 
+const errMsg = (err: unknown) =>
+  err instanceof Error ? err.message : String(err);
+
 /**
  * Records the outcome of a call. Always logs the lead to the Google Sheet;
  * additionally creates a Google Calendar event when an appointment time is
@@ -61,6 +64,8 @@ export async function POST(req: Request) {
   let loggedToSheet = false;
   let booked = false;
   let calendarUrl: string | undefined;
+  let sheetError = "";
+  let calendarError = "";
 
   // 1. Always log the lead to the CRM sheet.
   try {
@@ -93,13 +98,16 @@ export async function POST(req: Request) {
     loggedToSheet = true;
   } catch (err) {
     console.error("[agent/book-appointment] sheet", err);
+    sheetError = errMsg(err);
   }
 
   // 2. Qualified + has a time → also create the calendar event.
   if (willBook) {
     const calendarId = process.env.GOOGLE_CALENDAR_ID;
     const calAuth = getGoogleAuth(["https://www.googleapis.com/auth/calendar"]);
-    if (calendarId && calAuth) {
+    if (!calendarId || !calAuth) {
+      calendarError = "GOOGLE_CALENDAR_ID is not set.";
+    } else {
       try {
         const { start, end, timeZone } = parseAppointmentWindow(
           lead.appointment
@@ -129,23 +137,36 @@ export async function POST(req: Request) {
         calendarUrl = event.data.htmlLink ?? undefined;
       } catch (err) {
         console.error("[agent/book-appointment] calendar", err);
+        calendarError = errMsg(err);
       }
     }
   }
 
-  const result = booked
-    ? "Done — the consultation is on the calendar and the lead is saved."
-    : loggedToSheet
-      ? "The lead is saved to the CRM sheet."
-      : "I had trouble saving that — please follow up manually.";
+  let result: string;
+  if (!loggedToSheet) {
+    result = `Couldn't write to the Google Sheet — ${
+      sheetError || "unknown error"
+    }`;
+  } else if (willBook && !booked) {
+    result = `Lead saved, but the calendar event failed — ${
+      calendarError || "unknown error"
+    }`;
+  } else if (booked) {
+    result = "Done — the consultation is on the calendar and the lead is saved.";
+  } else {
+    result = "The lead is saved to the CRM sheet.";
+  }
 
   return Response.json({
     ok: loggedToSheet,
     configured: true,
     loggedToSheet,
+    willBook,
     booked,
     calendarUrl,
     sheetUrl: `https://docs.google.com/spreadsheets/d/${spreadsheetId}`,
+    sheetError: sheetError || undefined,
+    calendarError: calendarError || undefined,
     result,
   });
 }

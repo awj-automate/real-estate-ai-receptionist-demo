@@ -18,6 +18,10 @@ import { formatClock } from "@/lib/utils";
 
 const TOTAL = SAMPLE_CALL.length;
 
+/** Playback speed for the sample clips. The transcript types in sync with the
+ *  audio, so this speeds the spoken pace and the typing together. Tune to taste. */
+const PLAYBACK_RATE = 1.25;
+
 /** Reading-time used to type a line out when its audio clip is unavailable. */
 const fallbackDur = (text: string) => Math.max(1.8, text.length * 0.055);
 
@@ -56,6 +60,8 @@ export function ModeSampleCall({ onHome }: { onHome: () => void }) {
     fbRef.current = { active: false, elapsed: 0, dur: 0 };
     audio.src = lineAudioSrc(index);
     audio.currentTime = 0;
+    audio.playbackRate = PLAYBACK_RATE;
+    audio.preservesPitch = true; // speed up without raising the pitch
     setLineProgress(0);
     audio.play().catch(() => {
       // Clip missing / autoplay blocked → time this line out instead.

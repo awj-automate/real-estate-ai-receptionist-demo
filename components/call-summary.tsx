@@ -38,6 +38,7 @@ type BookingState = "idle" | "saving" | "done" | "error" | "unconfigured";
 
 interface BookingResult {
   loggedToSheet: boolean;
+  willBook: boolean;
   booked: boolean;
   sheetUrl?: string;
   calendarUrl?: string;
@@ -294,6 +295,13 @@ export function CallSummary({
                     View <ExternalLink className="h-3 w-3" />
                   </a>
                 )}
+              </div>
+            ) : bookingResult.willBook ? (
+              <div className="flex items-center gap-2.5 rounded-xl border border-amber-500/30 bg-amber-500/[0.1] px-3 py-2.5">
+                <TriangleAlert className="h-4 w-4 shrink-0 text-amber-600" />
+                <span className="flex-1 font-jakarta text-sm text-amber-700">
+                  Couldn&apos;t create the calendar event — check the server logs
+                </span>
               </div>
             ) : (
               <div className="flex items-center gap-2.5 rounded-xl border border-black/[0.06] bg-ds-surface px-3 py-2.5">
