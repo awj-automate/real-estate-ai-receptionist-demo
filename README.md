@@ -47,9 +47,15 @@ see below.
 | `RETELL_API_KEY`   | Mode 1 (live call)     | From the Retell dashboard.                                         |
 | `RETELL_AGENT_ID`  | Mode 1 (live call)     | The `agent_id` of the Sarah agent you create.                      |
 | `OPENAI_API_KEY`   | Summary + sample audio | Mode 1 call-summary extraction; build-time Mode 2 voice generation. |
+| `GOOGLE_SHEETS_SERVICE_ACCOUNT_EMAIL` | Booking buttons | Service-account email (shared by Sheets + Calendar). |
+| `GOOGLE_SHEETS_PRIVATE_KEY` | Booking buttons | Service-account private key (quoted, keep the `\n`). |
+| `GOOGLE_SHEETS_SPREADSHEET_ID` | Booking buttons | Target Google Sheet. |
+| `GOOGLE_CALENDAR_ID` | Booking buttons | Target Google Calendar. |
 
 If `RETELL_API_KEY` / `RETELL_AGENT_ID` are missing, Mode 1 is disabled and a
-setup banner is shown — Modes 2 and 3 stay fully functional.
+setup banner is shown — Modes 2 and 3 stay fully functional. The Call Summary
+booking buttons (see below) show "not connected" until the `GOOGLE_*` vars are
+set — every key is optional.
 
 ## Retell agent setup (required for Mode 1)
 
@@ -251,14 +257,47 @@ To avoid regenerating on every deploy, render the clips once locally
 (`OPENAI_API_KEY=sk-... node scripts/generate-sample-audio.mjs`) and commit
 `public/audio/lines/` — the script skips when the clips already exist.
 
+## Booking destinations
+
+After a call (Mode 1 or Mode 2), the Call Summary shows **"Send this booking
+to"** buttons that write the qualified lead to real destinations:
+
+- **Add to Google Sheet** — appends a row to a spreadsheet
+- **Book in Google Calendar** — creates a calendar event for the consultation
+
+Both run through one Google **service account**. Until it's configured, the
+buttons show "not connected" rather than breaking — the demo never depends on
+them.
+
+### Setup (one-time, ~15 min)
+
+1. In [Google Cloud Console](https://console.cloud.google.com), create a
+   project and **enable the Google Sheets API and Google Calendar API**.
+2. Create a **service account**, add a **JSON key**, and download it.
+3. Create a Google Sheet with a tab named **`Bookings`** and this header row:
+   `Timestamp · Customer Name · Phone · Email · Inquiry Type · Property ·
+   Timeline · Financing · Lead Quality · Appointment · Source`
+4. Create (or pick) a Google Calendar for demo consultations.
+5. **Share both the Sheet and the Calendar** with the service account's email
+   (`client_email` from the JSON) — Editor on the Sheet, "Make changes to
+   events" on the Calendar.
+6. Set the env vars (in `.env.local` and Vercel): `GOOGLE_SHEETS_SERVICE_ACCOUNT_EMAIL`
+   (the JSON `client_email`), `GOOGLE_SHEETS_PRIVATE_KEY` (the JSON `private_key`,
+   quoted, with its `\n` intact), `GOOGLE_SHEETS_SPREADSHEET_ID` (from the Sheet
+   URL), and `GOOGLE_CALENDAR_ID` (from the Calendar's settings).
+
+One service account powers both Sheets and Calendar — that's why both share the
+`GOOGLE_SHEETS_`-prefixed credential vars.
+
 ## Deployment (Vercel)
 
 1. Push this repo to GitHub.
 2. Import the repo at [vercel.com/new](https://vercel.com/new) — Vercel
    auto-detects Next.js.
 3. In **Project Settings → Environment Variables**, add `RETELL_API_KEY`,
-   `RETELL_AGENT_ID`, and `OPENAI_API_KEY` (the app deploys and runs Modes 2 + 3
-   without `RETELL_*`).
+   `RETELL_AGENT_ID`, `OPENAI_API_KEY`, and the `GOOGLE_*` booking vars — every
+   key is optional and degrades gracefully, so the app deploys and runs Modes
+   2 + 3 with none of them set.
 4. Every push to `main` auto-deploys. Paste the production URL into the **Live
    demo** section above.
 
@@ -268,14 +307,17 @@ To avoid regenerating on every deploy, render the clips once locally
 app/
   api/retell-token/route.ts   Creates a Retell web call (server-side key)
   api/summarize/route.ts      GPT-4o transcript → structured lead summary
+  api/booking/*/route.ts      Writes the booking to Google Sheets / Calendar
   page.tsx                    Server component; checks env, renders the demo
 components/
   demo-app.tsx                Hero + mode switcher + navigation
   mode-live-call.tsx          Mode 1 — Retell Web SDK integration
   mode-sample-call.tsx        Mode 2 — voiced per-line playback
   mode-dashboard.tsx          Mode 3 — animated lead dashboard
-  call-summary.tsx            Animated post-call summary + mock CRM push
+  call-summary.tsx            Post-call summary + booking buttons
+  booking-destinations.tsx    Sheets / Calendar booking actions
 lib/
+  booking.ts                  Google auth + appointment-window parsing
   sample-call-script.json     Mode 2 transcript (single source of truth)
   dashboard-data.ts           Mode 3 mock data
 ```
