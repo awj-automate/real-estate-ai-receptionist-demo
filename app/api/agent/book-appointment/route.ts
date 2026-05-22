@@ -7,6 +7,23 @@ export const dynamic = "force-dynamic";
 const errMsg = (err: unknown) =>
   err instanceof Error ? err.message : String(err);
 
+/** Canonical header for the Bookings sheet — re-applied on every write so the
+ *  columns always line up, regardless of how the sheet was first set up. */
+const SHEET_HEADER = [
+  "Timestamp",
+  "Customer Name",
+  "Phone",
+  "Email",
+  "Inquiry Type",
+  "Property",
+  "Timeline",
+  "Financing",
+  "Lead Quality",
+  "Appointment",
+  "Outcome",
+  "Source",
+];
+
 /**
  * Records the outcome of a call. Always logs the lead to the Google Sheet;
  * additionally creates a Google Calendar event when an appointment time is
@@ -70,6 +87,13 @@ export async function POST(req: Request) {
   // 1. Always log the lead to the CRM sheet.
   try {
     const sheets = google.sheets({ version: "v4", auth: sheetAuth });
+    // Keep row 1 as the canonical header so the columns always line up.
+    await sheets.spreadsheets.values.update({
+      spreadsheetId,
+      range: "Bookings!A1:L1",
+      valueInputOption: "RAW",
+      requestBody: { values: [SHEET_HEADER] },
+    });
     await sheets.spreadsheets.values.append({
       spreadsheetId,
       range: "Bookings!A:L",
