@@ -20,7 +20,7 @@ const TOTAL = SAMPLE_CALL.length;
 
 /** Playback speed for the sample clips. The transcript types in sync with the
  *  audio, so this speeds the spoken pace and the typing together. Tune to taste. */
-const PLAYBACK_RATE = 1.25;
+const PLAYBACK_RATE = 1.3;
 
 /** Reading-time used to type a line out when its audio clip is unavailable. */
 const fallbackDur = (text: string) => Math.max(1.8, text.length * 0.055);
